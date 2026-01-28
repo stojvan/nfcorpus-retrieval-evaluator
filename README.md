@@ -1,87 +1,381 @@
-# A2A Agent Template
+# NFCorpus Retrieval Evaluator
 
-A minimal template for building [A2A (Agent-to-Agent)](https://a2a-protocol.org/latest/) green agents compatible with the [AgentBeats](https://agentbeats.dev) platform.
+A **green agent** (evaluator) for the [AgentBeats](https://agentbeats.dev) competition that evaluates **purple agents** (retrieval systems) on the NFCorpus biomedical information retrieval benchmark.
 
-## Project Structure
+## Overview
+
+This green agent evaluates how well purple agents can retrieve relevant biomedical documents from the NFCorpus dataset (part of the BEIR benchmark). It measures performance using **NDCG@5** (Normalized Discounted Cumulative Gain at rank 5).
+
+### Key Features
+
+- 🔬 **NFCorpus Dataset**: ~3,633 biomedical documents, 323 test queries
+- 📊 **NDCG@5 Metric**: Industry-standard ranking evaluation
+- 🎲 **Reproducible Sampling**: Random seed for consistent query selection
+- 🐳 **Docker Compose**: Complete infrastructure (Qdrant + MCP + Green Agent)
+- 🔌 **MCP Protocol**: Purple agents access vector database via Model Context Protocol
+- ✅ **Type-Safe**: Pydantic schemas for all data structures
+
+## Architecture
 
 ```
-src/
-├─ server.py      # Server setup and agent card configuration
-├─ executor.py    # A2A request handling
-├─ agent.py       # Your agent implementation goes here
-└─ messenger.py   # A2A messaging utilities
-tests/
-└─ test_agent.py  # Agent tests
-Dockerfile        # Docker configuration
-pyproject.toml    # Python dependencies
-.github/
-└─ workflows/
-   └─ test-and-publish.yml # CI workflow
+┌─────────────────────────────────────────────────────────────┐
+│                    Green Agent (Evaluator)                   │
+│  - Samples queries with random seed                         │
+│  - Sends queries to purple agent via A2A protocol           │
+│  - Receives top-5 document IDs from purple agent            │
+│  - Calculates NDCG@5 score                                  │
+│  - Reports evaluation results                               │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              │ A2A Protocol
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Purple Agent (Retrieval)                   │
+│  - Receives query from green agent                          │
+│  - Searches Qdrant vector database via MCP                  │
+│  - Returns list of 5 most relevant document IDs             │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              │ MCP Protocol
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Qdrant Vector Database                    │
+│  - Stores NFCorpus documents as embeddings                  │
+│  - sentence-transformers/all-MiniLM-L6-v2 (384-dim)        │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Getting Started
+## Quick Start
 
-1. **Create your repository** - Click "Use this template" to create your own repository from this template
+### 1. Prepare Data
 
-2. **Implement your agent** - Add your agent logic to [`src/agent.py`](src/agent.py)
-
-3. **Configure your agent card** - Fill in your agent's metadata (name, skills, description) in [`src/server.py`](src/server.py)
-
-4. **Write your tests** - Add custom tests for your agent in [`tests/test_agent.py`](tests/test_agent.py)
-
-For a concrete example of implementing a green agent using this template, see this [draft PR](https://github.com/RDI-Foundation/green-agent-template/pull/3).
-
-## Running Locally
+Download NFCorpus dataset from BEIR:
 
 ```bash
 # Install dependencies
 uv sync
 
-# Run the server
-uv run src/server.py
+# Download and prepare data
+uv run python scripts/prepare_data.py
 ```
 
-## Running with Docker
+This creates:
+- `data/corpus.jsonl` - All NFCorpus documents
+- `data/test_queries.jsonl` - Test queries
+- `data/test_qrels.jsonl` - Ground truth relevance judgments
+
+### 2. Start Infrastructure
+
+Start Qdrant and MCP server:
 
 ```bash
-# Build the image
-docker build -t my-agent .
+docker-compose up -d qdrant mcp-server
+```
 
-# Run the container
-docker run -p 9009:9009 my-agent
+### 3. Index Documents
+
+Generate embeddings and populate Qdrant:
+
+```bash
+uv run python scripts/index_documents.py
+```
+
+This indexes ~3,633 documents with 384-dimensional embeddings.
+
+### 4. Start Green Agent
+
+```bash
+# Local development
+uv run src/server.py
+
+# Or with Docker
+docker-compose up green-agent
+```
+
+### 5. Run Evaluation
+
+Send an evaluation request:
+
+```bash
+curl -X POST http://localhost:9009/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "participants": {
+      "retrieval_agent": "http://purple-agent:9010"
+    },
+    "config": {
+      "num_queries": 100,
+      "top_k": 5,
+      "random_seed": 42
+    }
+  }'
+```
+
+## Configuration
+
+### Evaluation Parameters
+
+- **num_queries** (1-323): Number of queries to evaluate (default: 100)
+- **top_k** (1-100): Number of documents to retrieve per query (default: 5)
+- **random_seed** (integer): Random seed for reproducible query sampling (default: 42)
+
+### Example Request
+
+```json
+{
+  "participants": {
+    "retrieval_agent": "http://purple-agent:9010"
+  },
+  "config": {
+    "num_queries": 100,
+    "top_k": 5,
+    "random_seed": 42
+  }
+}
+```
+
+## Building a Purple Agent
+
+Purple agents must:
+1. Implement A2A protocol
+2. Accept `QueryRequest` format: `{"query": "...", "top_k": 5}`
+3. Return `RetrievalResponse` format: `{"doc_ids": ["MED-123", ...]}`
+4. Access MCP server at `http://mcp-server:8000` for vector search
+
+**Full specification**: See [`docs/purple_agent_spec.md`](docs/purple_agent_spec.md)
+
+### MCP Search Tool
+
+Purple agents can use the `search_nfcorpus` tool:
+
+```python
+# Call MCP tool
+response = await mcp_client.call_tool(
+    "search_nfcorpus",
+    {"query": "calcium and bone health", "top_k": 5}
+)
+
+# Extract document IDs
+doc_ids = [result["doc_id"] for result in response["results"]]
+```
+
+## Evaluation Metrics
+
+### Primary Metric: NDCG@5
+
+**NDCG** (Normalized Discounted Cumulative Gain) measures ranking quality:
+- **Range**: 0.0 to 1.0
+- **1.0** = Perfect ranking
+- **0.0** = No relevant documents retrieved
+- **Considers**: Both relevance scores and ranking position
+
+NFCorpus uses 3-level relevance:
+- **2** = Highly relevant
+- **1** = Partially relevant
+- **0** = Not relevant
+
+### Output Metrics
+
+The evaluation report includes:
+- **Mean NDCG@5**: Average across all queries
+- **Median NDCG@5**: Median performance
+- **Std NDCG@5**: Standard deviation
+- **Min/Max NDCG@5**: Range of performance
+- **Success Rate**: Fraction of queries with NDCG > 0
+
+### Example Output
+
+```
+NFCorpus Retrieval Evaluation Results
+============================================================
+Total Queries: 100
+Mean NDCG@5: 0.4560
+Median NDCG@5: 0.4230
+Std NDCG@5: 0.1230
+Min NDCG@5: 0.0000
+Max NDCG@5: 1.0000
+Success Rate: 87.00%
+============================================================
+Configuration:
+  - Queries: 100
+  - Top-K: 5
+  - Random Seed: 42
+```
+
+## Project Structure
+
+```
+nfcorpus-retrieval-evaluator/
+├── data/                           # NFCorpus dataset
+│   ├── corpus.jsonl
+│   ├── test_queries.jsonl
+│   └── test_qrels.jsonl
+├── src/                            # Green agent implementation
+│   ├── agent.py                    # Main evaluation logic
+│   ├── server.py                   # A2A server & agent card
+│   ├── schemas.py                  # Pydantic data models
+│   ├── metrics.py                  # NDCG calculation
+│   ├── executor.py                 # Request handler
+│   └── messenger.py                # A2A messaging
+├── mcp_server/                     # FastMCP server for Qdrant
+│   ├── server.py
+│   ├── Dockerfile
+│   └── README.md
+├── docs/                           # Documentation
+│   ├── purple_agent_spec.md        # Purple agent interface spec
+│   └── examples/
+├── scripts/                        # Data preparation scripts
+│   ├── prepare_data.py
+│   └── index_documents.py
+├── tests/                          # Test suite
+│   ├── test_schemas.py
+│   ├── test_metrics.py
+│   └── test_agent.py
+├── docker-compose.yml              # Multi-service orchestration
+├── Dockerfile                      # Green agent Docker config
+├── pyproject.toml                  # Python dependencies
+└── TASK.md                         # Implementation roadmap
 ```
 
 ## Testing
 
-Run A2A conformance tests against your agent.
+### Run Unit Tests
 
 ```bash
 # Install test dependencies
 uv sync --extra test
 
-# Start your agent (uv or docker; see above)
+# Run all tests
+uv run pytest
 
-# Run tests against your running agent URL
-uv run pytest --agent-url http://localhost:9009
+# Run specific test file
+uv run pytest tests/test_metrics.py
+
+# Run with coverage
+uv run pytest --cov=src
 ```
 
-## Publishing
+### Test Reproducibility
 
-The repository includes a GitHub Actions workflow that automatically builds, tests, and publishes a Docker image of your agent to GitHub Container Registry.
+Same random seed should produce identical results:
 
-If your agent needs API keys or other secrets, add them in Settings → Secrets and variables → Actions → Repository secrets. They'll be available as environment variables during CI tests.
-
-- **Push to `main`** → publishes `latest` tag:
-```
-ghcr.io/<your-username>/<your-repo-name>:latest
+```bash
+# Run evaluation twice with same seed
+# Results should be identical
 ```
 
-- **Create a git tag** (e.g. `git tag v1.0.0 && git push origin v1.0.0`) → publishes version tags:
-```
-ghcr.io/<your-username>/<your-repo-name>:1.0.0
-ghcr.io/<your-username>/<your-repo-name>:1
+## Docker Compose Services
+
+The `docker-compose.yml` defines three services:
+
+### 1. Qdrant (Vector Database)
+- **Port**: 6333
+- **Volume**: Persistent storage for vectors
+- **Image**: `qdrant/qdrant:latest`
+
+### 2. MCP Server (FastMCP)
+- **Port**: 8000
+- **Depends on**: Qdrant
+- **Tools**: `search_nfcorpus`, `health_check`
+
+### 3. Green Agent (Evaluator)
+- **Port**: 9009
+- **Depends on**: Qdrant, MCP Server
+- **Volumes**: `./data` mounted read-only
+
+### Commands
+
+```bash
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop all services
+docker-compose down
+
+# Rebuild after code changes
+docker-compose build
+docker-compose up -d
 ```
 
-Once the workflow completes, find your Docker image in the Packages section (right sidebar of your repository). Configure the package visibility in package settings.
+## Development
 
-> **Note:** Organization repositories may need package write permissions enabled manually (Settings → Actions → General). Version tags must follow [semantic versioning](https://semver.org/) (e.g., `v1.0.0`).
+### Local Development Setup
+
+```bash
+# Install dependencies
+uv sync
+
+# Start Qdrant and MCP server
+docker-compose up -d qdrant mcp-server
+
+# Run green agent locally
+uv run src/server.py
+```
+
+### Adding New Metrics
+
+1. Add metric function to `src/metrics.py`
+2. Update `QueryResult` schema in `src/schemas.py`
+3. Calculate metric in `src/agent.py`
+4. Add tests in `tests/test_metrics.py`
+
+## Dataset Information
+
+**NFCorpus** (Nutrition Facts Corpus)
+- **Domain**: Biomedical/nutrition
+- **Documents**: 3,633 PubMed articles
+- **Queries**: 323 NutritionFacts.org queries
+- **Relevance**: 3-level judgments (0, 1, 2)
+- **Source**: [BEIR Benchmark](https://huggingface.co/datasets/BeIR/nfcorpus)
+
+## Troubleshooting
+
+### Qdrant Connection Issues
+
+```bash
+# Check Qdrant health
+curl http://localhost:6333/health
+
+# View Qdrant logs
+docker-compose logs qdrant
+```
+
+### MCP Server Issues
+
+```bash
+# Test MCP server
+curl http://localhost:8000/health_check
+
+# View MCP logs
+docker-compose logs mcp-server
+```
+
+### Data Not Found
+
+Ensure data files exist:
+```bash
+ls data/
+# Should show: corpus.jsonl, test_queries.jsonl, test_qrels.jsonl
+```
+
+## Contributing
+
+This is a competition submission for AgentBeats. For questions:
+- Review [`TASK.md`](TASK.md) for implementation details
+- Check [`docs/purple_agent_spec.md`](docs/purple_agent_spec.md) for purple agent interface
+
+## License
+
+MIT License - See LICENSE file for details
+
+## References
+
+- **AgentBeats**: https://agentbeats.dev
+- **A2A Protocol**: https://a2a-protocol.org/latest/
+- **BEIR Benchmark**: https://github.com/beir-cellar/beir
+- **NFCorpus Dataset**: https://huggingface.co/datasets/BeIR/nfcorpus
+- **Qdrant**: https://qdrant.tech/
+- **FastMCP**: https://github.com/jlowin/fastmcp

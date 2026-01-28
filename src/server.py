@@ -20,20 +20,19 @@ def main():
     parser.add_argument("--card-url", type=str, help="URL to advertise in the agent card")
     args = parser.parse_args()
 
-    # Fill in your agent card
-    # See: https://a2a-protocol.org/latest/tutorials/python/3-agent-skills-and-card/
-    
     skill = AgentSkill(
-        id="",
-        name="",
-        description="",
-        tags=[],
-        examples=[]
+        id="nfcorpus-retrieval-eval",
+        name="NFCorpus Retrieval Evaluator",
+        description="Evaluates information retrieval agents on biomedical document retrieval using the NFCorpus dataset from BEIR. Measures performance using NDCG@5 metric.",
+        tags=["evaluation", "information-retrieval", "biomedical", "ndcg", "beir"],
+        examples=[
+            '{"participants": {"retrieval_agent": "http://purple-agent:9010"}, "config": {"num_queries": 100, "top_k": 5, "random_seed": 42}}'
+        ]
     )
 
     agent_card = AgentCard(
-        name="",
-        description="",
+        name="NFCorpus Retrieval Evaluator",
+        description="Green agent that evaluates purple agents on NFCorpus biomedical information retrieval benchmark using NDCG@5 metric. Supports reproducible evaluation with configurable random seeds.",
         url=args.card_url or f"http://{args.host}:{args.port}/",
         version='1.0.0',
         default_input_modes=['text'],

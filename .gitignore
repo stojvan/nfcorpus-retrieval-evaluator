@@ -12,3 +12,26 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Data files (download with scripts/prepare_data.py)
+data/*.jsonl
+data/*.json
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker volumes
+qdrant_data/
+
+# Task tracking and test files
+TASK.md
+test_*.py
