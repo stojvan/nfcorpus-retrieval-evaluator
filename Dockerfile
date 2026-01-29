@@ -6,6 +6,7 @@ WORKDIR /home/agent
 COPY --chown=agent:agent pyproject.toml uv.lock README.md ./
 COPY --chown=agent:agent src src
 COPY --chown=agent:agent scripts scripts
+COPY --chown=agent:agent data data
 
 USER agent
 
@@ -15,6 +16,5 @@ RUN \
 
 ENV PYTHONUNBUFFERED=1
 
-ENTRYPOINT ["uv", "run"]
-CMD ["src/server.py", "--host", "0.0.0.0"]
+CMD ["uv", "run", "python", "src/server.py", "--host", "0.0.0.0"]
 EXPOSE 9009

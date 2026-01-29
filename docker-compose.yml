@@ -21,7 +21,7 @@ services:
       - ./data:/home/agent/data:ro
     networks:
       - nfcorpus-network
-    command: ["python", "scripts/index_documents.py", "--corpus-file", "data/corpus.jsonl", "--qdrant-url", "http://qdrant:6333", "--collection-name", "nfcorpus", "--batch-size", "100"]
+    command: ["uv", "run", "python", "scripts/index_documents.py", "--corpus-file", "data/corpus.jsonl", "--qdrant-url", "http://qdrant:6333", "--collection-name", "nfcorpus", "--batch-size", "100"]
     restart: "no"
 
   mcp-server:
@@ -52,7 +52,7 @@ services:
       - qdrant
       - mcp-server
       - indexer
-    command: ["src/server.py", "--host", "0.0.0.0", "--port", "9009"]
+    command: ["uv", "run", "python", "src/server.py", "--host", "0.0.0.0", "--port", "9009"]
 
 volumes:
   qdrant_data:
