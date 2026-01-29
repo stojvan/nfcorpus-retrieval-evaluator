@@ -16,5 +16,6 @@ RUN \
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["uv", "run", "python", "src/server.py", "--host", "0.0.0.0"]
+ENTRYPOINT ["uv", "run", "python", "src/server.py"]
+CMD ["--host", "0.0.0.0", "--port", "9009"]
 EXPOSE 9009
