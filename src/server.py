@@ -19,20 +19,29 @@ def main():
     parser.add_argument("--port", type=int, default=9009, help="Port to bind the server")
     parser.add_argument("--card-url", type=str, help="URL to advertise in the agent card")
     args = parser.parse_args()
-
+    
     skill = AgentSkill(
-        id="nfcorpus-retrieval-eval",
-        name="NFCorpus Retrieval Evaluator",
-        description="Evaluates information retrieval agents on biomedical document retrieval using the NFCorpus dataset from BEIR. Measures performance using NDCG@5 metric.",
-        tags=["evaluation", "information-retrieval", "biomedical", "ndcg", "beir"],
-        examples=[
-            '{"participants": {"retrieval_agent": "http://purple-agent:9010"}, "config": {"num_queries": 100, "top_k": 5, "random_seed": 42}}'
-        ]
+        id="nfcorpus_retrieval_eval",
+        name="NFCorpus Biomedical Retrieval Evaluation",
+        description="Evaluates an agent's ability to retrieve relevant biomedical documents from the NFCorpus corpus. The agent receives biomedical queries and must return ranked lists of relevant document IDs. Performance is measured using standard IR metrics: NDCG@k, MRR@k, Precision@k, and Recall@k.",
+        tags=["evaluation", "information-retrieval", "biomedical", "nfcorpus", "beir"],
+        examples=["""
+{
+  "participants": {
+    "retrieval_agent": "https://retrieval.example.com:9010"
+  },
+  "config": {
+    "num_queries": 50,
+    "top_k": 10,
+    "random_seed": 777
+  }
+}
+"""]
     )
 
     agent_card = AgentCard(
         name="NFCorpus Retrieval Evaluator",
-        description="Green agent that evaluates purple agents on NFCorpus biomedical information retrieval benchmark using NDCG@5 metric. Supports reproducible evaluation with configurable random seeds.",
+        description="Green agent that evaluates purple agents on the NFCorpus biomedical information retrieval benchmark. Sends biomedical queries to purple agents, collects ranked document IDs, and reports comprehensive IR metrics including NDCG, MRR, Precision, and Recall.",
         url=args.card_url or f"http://{args.host}:{args.port}/",
         version='1.0.0',
         default_input_modes=['text'],

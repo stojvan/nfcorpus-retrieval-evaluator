@@ -5,17 +5,35 @@ WORKDIR /home/agent
 
 COPY --chown=agent:agent pyproject.toml uv.lock README.md ./
 COPY --chown=agent:agent src src
-COPY --chown=agent:agent scripts scripts
-COPY --chown=agent:agent data data
 
 USER agent
 
+ENV HF_HOME=/home/agent/.cache/huggingface
+ENV QDRANT_PATH=/home/agent/qdrant_data
+
+RUN mkdir -p /home/agent/.cache/huggingface /home/agent/qdrant_data /home/agent/data_cache
+
 RUN \
     --mount=type=cache,target=/home/agent/.cache/uv,uid=1000 \
-    uv sync
+    uv sync --locked
 
-ENV PYTHONUNBUFFERED=1
+ARG OPENAI_API_KEY
+ENV OPENAI_API_KEY=${OPENAI_API_KEY}
 
-ENTRYPOINT ["uv", "run", "python", "src/server.py"]
-CMD ["--host", "0.0.0.0", "--port", "9009"]
-EXPOSE 9009
+RUN \
+    --mount=type=cache,target=/home/agent/.cache/uv,uid=1000 \
+    --mount=type=secret,id=openai_key,target=/run/secrets/openai_key \
+    if [ -f /run/secrets/openai_key ]; then \
+        export OPENAI_API_KEY=$(cat /run/secrets/openai_key); \
+    fi && \
+    if [ -n "$OPENAI_API_KEY" ]; then \
+        uv run src/prepare_data.py; \
+    else \
+        echo "WARNING: OPENAI_API_KEY not provided, skipping data preparation"; \
+    fi
+
+COPY --chown=agent:agent src/start.sh ./
+RUN chmod +x start.sh
+
+ENTRYPOINT ["./start.sh"]
+EXPOSE 9009 8000

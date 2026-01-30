@@ -1,63 +1,16 @@
+version: '3.8'
+
 services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: nfcorpus-qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    environment:
-      - QDRANT__SERVICE__GRPC_PORT=6334
-    networks:
-      - nfcorpus-network
-
-  indexer:
-    build: .
-    container_name: nfcorpus-indexer
-    depends_on:
-      - qdrant
-    volumes:
-      - ./data:/home/agent/data:ro
-    networks:
-      - nfcorpus-network
-    command: ["uv", "run", "python", "scripts/index_documents.py", "--corpus-file", "data/corpus.jsonl", "--qdrant-url", "http://qdrant:6333", "--collection-name", "nfcorpus", "--batch-size", "100"]
-    restart: "no"
-
-  mcp-server:
-    build: ./mcp_server
-    container_name: nfcorpus-mcp
-    ports:
-      - "8000:8000"
-    depends_on:
-      - qdrant
-      - indexer
-    environment:
-      - QDRANT_URL=http://qdrant:6333
-      - COLLECTION_NAME=nfcorpus
-    networks:
-      - nfcorpus-network
-    restart: on-failure
-
   green-agent:
-    build: .
-    container_name: nfcorpus-green-agent
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        OPENAI_API_KEY: ${OPENAI_API_KEY}
     ports:
       - "9009:9009"
-    volumes:
-      - ./data:/home/agent/data:ro
-    networks:
-      - nfcorpus-network
-    depends_on:
-      - qdrant
-      - mcp-server
-      - indexer
-    command: ["--host", "0.0.0.0", "--port", "9009"]
-
-volumes:
-  qdrant_data:
-    driver: local
-
-networks:
-  nfcorpus-network:
-    driver: bridge
+      - "8001:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    container_name: nfcorpus-green-agent
+    restart: unless-stopped

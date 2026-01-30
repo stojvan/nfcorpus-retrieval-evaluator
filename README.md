@@ -1,125 +1,45 @@
-# NFCorpus Retrieval Evaluator
+# NFCorpus Retrieval Green Agent
 
-A **green agent** (evaluator) for the [AgentBeats](https://agentbeats.dev) competition that evaluates **purple agents** (retrieval systems) on the NFCorpus biomedical information retrieval benchmark.
+A **green agent** (evaluator) for the [AgentBeats](https://agentbeats.dev) competition that evaluates **purple agents** (retrieval systems) on the NFCorpus biomedical information retrieval benchmark. Built using the [A2A (Agent-to-Agent)](https://a2a-protocol.org/latest/) protocol.
 
 ## Overview
 
-This green agent evaluates how well purple agents can retrieve relevant biomedical documents from the NFCorpus dataset (part of the BEIR benchmark). It measures performance using **NDCG@5** (Normalized Discounted Cumulative Gain at rank 5).
+This green agent tests a purple agent's ability to retrieve relevant biomedical documents from the NFCorpus corpus. The agent:
+- Downloads and embeds the NFCorpus corpus using OpenAI embeddings
+- Stores embeddings in a local Qdrant vector database
+- Sends biomedical queries to purple agents via MCP server
+- Collects ranked document IDs from purple agents
+- Evaluates retrieval performance using standard IR metrics
 
-### Key Features
+## Dataset
 
-- 🔬 **NFCorpus Dataset**: ~3,633 biomedical documents, 323 test queries
-- 📊 **NDCG@5 Metric**: Industry-standard ranking evaluation
-- 🎲 **Reproducible Sampling**: Random seed for consistent query selection
-- 🐳 **Docker Compose**: Complete infrastructure (Qdrant + MCP + Green Agent)
-- 🔌 **MCP Protocol**: Purple agents access vector database via Model Context Protocol
-- ✅ **Type-Safe**: Pydantic schemas for all data structures
+The agent uses the [NFCorpus dataset](https://huggingface.co/datasets/BeIR/nfcorpus) from the BEIR benchmark, which contains:
+- **Corpus**: 3,633 biomedical documents (PubMed abstracts)
+- **Queries**: 323 natural language queries about medical topics
+- **Qrels**: Ground truth relevance judgments (graded relevance: 0-2)
 
-## Architecture
+The dataset is downloaded during Docker build and embeddings are pre-computed using OpenAI's `text-embedding-3-small` model.
+
+## Project Structure
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Green Agent (Evaluator)                   │
-│  - Samples queries with random seed                         │
-│  - Sends queries to purple agent via A2A protocol           │
-│  - Receives top-5 document IDs from purple agent            │
-│  - Calculates NDCG@5 score                                  │
-│  - Reports evaluation results                               │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              │ A2A Protocol
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Purple Agent (Retrieval)                   │
-│  - Receives query from green agent                          │
-│  - Searches Qdrant vector database via MCP                  │
-│  - Returns list of 5 most relevant document IDs             │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              │ MCP Protocol
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Qdrant Vector Database                    │
-│  - Stores NFCorpus documents as embeddings                  │
-│  - sentence-transformers/all-MiniLM-L6-v2 (384-dim)        │
-└─────────────────────────────────────────────────────────────┘
+src/
+├─ server.py          # Server setup and agent card configuration
+├─ executor.py        # A2A request handling
+├─ agent.py           # Core evaluation logic with IR metrics
+├─ messenger.py       # A2A messaging utilities
+├─ data_loader.py     # NFCorpus dataset loading and Qdrant setup
+├─ schemas.py         # Pydantic models for requests/responses
+└─ mcp_server.py      # MCP server for purple agents to query Qdrant
+tests/
+└─ test_agent.py      # Agent tests
+Dockerfile            # Docker configuration with data download
+pyproject.toml        # Python dependencies
 ```
 
-## Quick Start
+## Assessment Request Format
 
-### 1. Prepare Data
-
-Download NFCorpus dataset from BEIR:
-
-```bash
-# Install dependencies
-uv sync
-
-# Download and prepare data
-uv run python scripts/prepare_data.py
-```
-
-This creates:
-- `data/corpus.jsonl` - All NFCorpus documents
-- `data/test_queries.jsonl` - Test queries
-- `data/test_qrels.jsonl` - Ground truth relevance judgments
-
-### 2. Start Infrastructure
-
-Start Qdrant and MCP server:
-
-```bash
-docker-compose up -d qdrant mcp-server
-```
-
-### 3. Index Documents
-
-Generate embeddings and populate Qdrant:
-
-```bash
-uv run python scripts/index_documents.py
-```
-
-This indexes ~3,633 documents with 384-dimensional embeddings.
-
-### 4. Start Green Agent
-
-```bash
-# Local development
-uv run src/server.py
-
-# Or with Docker
-docker-compose up green-agent
-```
-
-### 5. Run Evaluation
-
-Send an evaluation request:
-
-```bash
-curl -X POST http://localhost:9009/tasks \
-  -H "Content-Type: application/json" \
-  -d '{
-    "participants": {
-      "retrieval_agent": "http://purple-agent:9010"
-    },
-    "config": {
-      "num_queries": 100,
-      "top_k": 5,
-      "random_seed": 42
-    }
-  }'
-```
-
-## Configuration
-
-### Evaluation Parameters
-
-- **num_queries** (1-323): Number of queries to evaluate (default: 100)
-- **top_k** (1-100): Number of documents to retrieve per query (default: 5)
-- **random_seed** (integer): Random seed for reproducible query sampling (default: 42)
-
-### Example Request
+The green agent expects requests in the following format:
 
 ```json
 {
@@ -127,255 +47,225 @@ curl -X POST http://localhost:9009/tasks \
     "retrieval_agent": "http://purple-agent:9010"
   },
   "config": {
-    "num_queries": 100,
-    "top_k": 5,
-    "random_seed": 42
+    "num_queries": 50,
+    "top_k": 10,
+    "random_seed": 777
   }
 }
 ```
 
-## Building a Purple Agent
+### Configuration Parameters
 
-Purple agents must:
-1. Implement A2A protocol
-2. Accept `QueryRequest` format: `{"query": "...", "top_k": 5}`
-3. Return `RetrievalResponse` format: `{"doc_ids": ["MED-123", ...]}`
-4. Access MCP server at `http://mcp-server:8000` for vector search
+- **num_queries** (required): Number of queries to evaluate (1-323)
+- **top_k** (required): Number of documents to retrieve per query (1-100)
+- **random_seed** (optional): Integer seed for reproducible query sampling
 
-**Full specification**: See [`docs/purple_agent_spec.md`](docs/purple_agent_spec.md)
+## Purple Agent Requirements
 
-### MCP Search Tool
+Purple agents being evaluated must:
 
-Purple agents can use the `search_nfcorpus` tool:
+1. **Accept biomedical queries as JSON**:
+```json
+{
+  "query": "calcium and bone health",
+  "top_k": 10
+}
+```
 
+2. **Have access to MCP server** with `search_nfcorpus` tool:
+   - The green agent provides a Qdrant vector database with embedded NFCorpus documents
+   - Purple agents use the MCP server to search the vector database
+   - The MCP server runs on port 8000 within the Docker network
+
+3. **Respond with ranked document IDs**:
+```json
+{
+  "doc_ids": ["MED-123", "MED-456", "MED-789", "MED-234", "MED-567"]
+}
+```
+
+The `doc_ids` list should be ordered by relevance (most relevant first) and contain up to `top_k` document IDs.
+
+## Results Format
+
+The green agent returns comprehensive information retrieval metrics:
+
+```json
+{
+  "assessment_type": "nfcorpus_retrieval",
+  "num_queries": 50,
+  "evaluated_queries": 50,
+  "top_k": 10,
+  "metrics": {
+    "ndcg@10": 0.3421,
+    "mrr@10": 0.4821,
+    "precision@10": 0.2840,
+    "recall@10": 0.4521,
+  },
+  "execution_time_seconds": 62.5,
+  "successful_queries": 50,
+  "num_of_vector_sea": 0
+}
+```
+
+## Environment Variables
+
+The green agent requires the following environment variable:
+
+- **OPENAI_API_KEY** (required): OpenAI API key for embedding corpus documents and queries
+
+## Running Locally
+
+```bash
+# Set OpenAI API key
+export OPENAI_API_KEY=your_api_key_here
+
+# Install dependencies
+uv sync
+
+# Prepare data (download, embed, setup Qdrant)
+uv run src/prepare_data.py
+
+# Start MCP server (in one terminal)
+uv run src/mcp_server.py
+
+# Start A2A server (in another terminal)
+uv run src/server.py
+```
+
+## Running with Docker
+
+The Docker build process automatically downloads the NFCorpus dataset, embeds documents using OpenAI, and sets up the Qdrant vector database.
+
+```bash
+# Build the image with OpenAI API key
+docker build --build-arg OPENAI_API_KEY=your_api_key_here -t nfcorpus-evaluator .
+
+# Or using Docker secrets (recommended for production)
+echo "your_api_key_here" > openai_key.txt
+docker build --secret id=openai_key,src=openai_key.txt -t nfcorpus-evaluator .
+rm openai_key.txt
+
+# Run the container
+docker run -p 9009:9009 -p 8000:8000 -e OPENAI_API_KEY=your_api_key_here nfcorpus-evaluator
+```
+
+The container exposes two ports:
+- **9009**: A2A green agent server
+- **8000**: MCP server for purple agents to query Qdrant
+
+## MCP Server API
+
+The green agent provides an MCP server that purple agents can use to search the NFCorpus vector database. The MCP server runs on port 8000 and provides the following endpoint:
+
+### POST /search_nfcorpus
+
+Search the NFCorpus corpus using semantic similarity.
+
+**Request Body:**
+```json
+{
+  "query": "calcium and bone health",
+  "top_k": 10
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "doc_id": "MED-123",
+      "title": "Calcium supplementation and bone density",
+      "text": "Full document text...",
+      "score": 0.8542
+    }
+  ]
+}
+```
+
+Purple agents should:
+1. Receive a query from the green agent via A2A protocol
+2. Call the MCP server's `/search_nfcorpus` endpoint to retrieve relevant documents
+3. Process the results (e.g., re-rank, filter, analyze)
+4. Return a list of document IDs ordered by relevance
+
+## Quick Start with Docker Compose
+
+```bash
+# Create .env file with your OpenAI API key
+echo "OPENAI_API_KEY=your_api_key_here" > .env
+
+# Build and start the services
+docker-compose up --build
+
+# The green agent will be available at:
+# - A2A Server: http://localhost:9009
+# - MCP Server: http://localhost:8000
+```
+
+## Example Usage
+
+See `examples/purple_agent_example.py` for a complete example of how a purple agent should interact with the green agent.
+
+**Basic workflow:**
+
+1. Green agent sends a retrieval query to purple agent:
+```json
+{"query": "calcium and bone health", "top_k": 10}
+```
+
+2. Purple agent queries the MCP server:
 ```python
-# Call MCP tool
-response = await mcp_client.call_tool(
-    "search_nfcorpus",
-    {"query": "calcium and bone health", "top_k": 5}
-)
+import httpx
 
-# Extract document IDs
-doc_ids = [result["doc_id"] for result in response["results"]]
+async def search(query: str, top_k: int):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://localhost:8000/search_nfcorpus",
+            json={"query": query, "top_k": top_k}
+        )
+        return response.json()
 ```
 
-## Evaluation Metrics
-
-### Primary Metric: NDCG@5
-
-**NDCG** (Normalized Discounted Cumulative Gain) measures ranking quality:
-- **Range**: 0.0 to 1.0
-- **1.0** = Perfect ranking
-- **0.0** = No relevant documents retrieved
-- **Considers**: Both relevance scores and ranking position
-
-NFCorpus uses 3-level relevance:
-- **2** = Highly relevant
-- **1** = Partially relevant
-- **0** = Not relevant
-
-### Output Metrics
-
-The evaluation report includes:
-- **Mean NDCG@5**: Average across all queries
-- **Median NDCG@5**: Median performance
-- **Std NDCG@5**: Standard deviation
-- **Min/Max NDCG@5**: Range of performance
-- **Success Rate**: Fraction of queries with NDCG > 0
-
-### Example Output
-
-```
-NFCorpus Retrieval Evaluation Results
-============================================================
-Total Queries: 100
-Mean NDCG@5: 0.4560
-Median NDCG@5: 0.4230
-Std NDCG@5: 0.1230
-Min NDCG@5: 0.0000
-Max NDCG@5: 1.0000
-Success Rate: 87.00%
-============================================================
-Configuration:
-  - Queries: 100
-  - Top-K: 5
-  - Random Seed: 42
+3. Purple agent returns ranked document IDs:
+```json
+{"doc_ids": ["MED-123", "MED-456", "MED-789"]}
 ```
 
-## Project Structure
-
-```
-nfcorpus-retrieval-evaluator/
-├── data/                           # NFCorpus dataset
-│   ├── corpus.jsonl
-│   ├── test_queries.jsonl
-│   └── test_qrels.jsonl
-├── src/                            # Green agent implementation
-│   ├── agent.py                    # Main evaluation logic
-│   ├── server.py                   # A2A server & agent card
-│   ├── schemas.py                  # Pydantic data models
-│   ├── metrics.py                  # NDCG calculation
-│   ├── executor.py                 # Request handler
-│   └── messenger.py                # A2A messaging
-├── mcp_server/                     # FastMCP server for Qdrant
-│   ├── server.py
-│   ├── Dockerfile
-│   └── README.md
-├── docs/                           # Documentation
-│   ├── purple_agent_spec.md        # Purple agent interface spec
-│   └── examples/
-├── scripts/                        # Data preparation scripts
-│   ├── prepare_data.py
-│   └── index_documents.py
-├── tests/                          # Test suite
-│   ├── test_schemas.py
-│   ├── test_metrics.py
-│   └── test_agent.py
-├── docker-compose.yml              # Multi-service orchestration
-├── Dockerfile                      # Green agent Docker config
-├── pyproject.toml                  # Python dependencies
-└── TASK.md                         # Implementation roadmap
-```
+4. Green agent evaluates the results using IR metrics
 
 ## Testing
 
-### Run Unit Tests
+Run A2A conformance tests against your agent.
 
 ```bash
 # Install test dependencies
 uv sync --extra test
 
-# Run all tests
-uv run pytest
+# Start your agent (uv or docker; see above)
 
-# Run specific test file
-uv run pytest tests/test_metrics.py
-
-# Run with coverage
-uv run pytest --cov=src
+# Run tests against your running agent URL
+uv run pytest --agent-url http://localhost:9009
 ```
 
-### Test Reproducibility
+## Publishing
 
-Same random seed should produce identical results:
+The repository includes a GitHub Actions workflow that automatically builds, tests, and publishes a Docker image of your agent to GitHub Container Registry.
 
-```bash
-# Run evaluation twice with same seed
-# Results should be identical
+If your agent needs API keys or other secrets, add them in Settings → Secrets and variables → Actions → Repository secrets. They'll be available as environment variables during CI tests.
+
+- **Push to `main`** → publishes `latest` tag:
+```
+ghcr.io/<your-username>/<your-repo-name>:latest
 ```
 
-## Docker Compose Services
-
-The `docker-compose.yml` defines three services:
-
-### 1. Qdrant (Vector Database)
-- **Port**: 6333
-- **Volume**: Persistent storage for vectors
-- **Image**: `qdrant/qdrant:latest`
-
-### 2. MCP Server (FastMCP)
-- **Port**: 8000
-- **Depends on**: Qdrant
-- **Tools**: `search_nfcorpus`, `health_check`
-
-### 3. Green Agent (Evaluator)
-- **Port**: 9009
-- **Depends on**: Qdrant, MCP Server
-- **Volumes**: `./data` mounted read-only
-
-### Commands
-
-```bash
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop all services
-docker-compose down
-
-# Rebuild after code changes
-docker-compose build
-docker-compose up -d
+- **Create a git tag** (e.g. `git tag v1.0.0 && git push origin v1.0.0`) → publishes version tags:
+```
+ghcr.io/<your-username>/<your-repo-name>:1.0.0
+ghcr.io/<your-username>/<your-repo-name>:1
 ```
 
-## Development
+Once the workflow completes, find your Docker image in the Packages section (right sidebar of your repository). Configure the package visibility in package settings.
 
-### Local Development Setup
-
-```bash
-# Install dependencies
-uv sync
-
-# Start Qdrant and MCP server
-docker-compose up -d qdrant mcp-server
-
-# Run green agent locally
-uv run src/server.py
-```
-
-### Adding New Metrics
-
-1. Add metric function to `src/metrics.py`
-2. Update `QueryResult` schema in `src/schemas.py`
-3. Calculate metric in `src/agent.py`
-4. Add tests in `tests/test_metrics.py`
-
-## Dataset Information
-
-**NFCorpus** (Nutrition Facts Corpus)
-- **Domain**: Biomedical/nutrition
-- **Documents**: 3,633 PubMed articles
-- **Queries**: 323 NutritionFacts.org queries
-- **Relevance**: 3-level judgments (0, 1, 2)
-- **Source**: [BEIR Benchmark](https://huggingface.co/datasets/BeIR/nfcorpus)
-
-## Troubleshooting
-
-### Qdrant Connection Issues
-
-```bash
-# Check Qdrant health
-curl http://localhost:6333/health
-
-# View Qdrant logs
-docker-compose logs qdrant
-```
-
-### MCP Server Issues
-
-```bash
-# Test MCP server
-curl http://localhost:8000/health_check
-
-# View MCP logs
-docker-compose logs mcp-server
-```
-
-### Data Not Found
-
-Ensure data files exist:
-```bash
-ls data/
-# Should show: corpus.jsonl, test_queries.jsonl, test_qrels.jsonl
-```
-
-## Contributing
-
-This is a competition submission for AgentBeats. For questions:
-- Review [`TASK.md`](TASK.md) for implementation details
-- Check [`docs/purple_agent_spec.md`](docs/purple_agent_spec.md) for purple agent interface
-
-## License
-
-MIT License - See LICENSE file for details
-
-## References
-
-- **AgentBeats**: https://agentbeats.dev
-- **A2A Protocol**: https://a2a-protocol.org/latest/
-- **BEIR Benchmark**: https://github.com/beir-cellar/beir
-- **NFCorpus Dataset**: https://huggingface.co/datasets/BeIR/nfcorpus
-- **Qdrant**: https://qdrant.tech/
-- **FastMCP**: https://github.com/jlowin/fastmcp
+> **Note:** Organization repositories may need package write permissions enabled manually (Settings → Actions → General). Version tags must follow [semantic versioning](https://semver.org/) (e.g., `v1.0.0`).
